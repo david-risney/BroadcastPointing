@@ -1,0 +1,275 @@
+<head>
+    <title>Broadcast Pointing</title>
+</head>
+<style>
+    html, body {
+        width: 100%;
+        height: 100%;
+        border: 0;
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        font-family: sans-serif;
+    }
+
+    .big-center {
+        position: fixed;
+        width: 30vmin;
+        height: 30vmin;
+        left: calc(50% - 15vmin);
+        top: calc(50% - 15vmin);
+        font-size: calc(30vmin * 0.75);
+    }
+
+    .big-arrow {
+        position: fixed;
+        width: 30vmin;
+        height: 30vmin;
+        left: calc(50% - 15vmin);
+        top: calc(50% - 15vmin);
+        font-size: calc(30vmin * 0.75);
+    }
+
+    .hidden {
+        display: none;
+    }
+
+    .bouncy-text {
+        position: fixed;
+        font-size: 10vmin;
+        opacity: 1;
+        transition: all 1s ease-in-out;
+    }
+</style>
+<div><a href="https://github.com/david-risney/BroadcastPointing">GitHub</a></div>
+<div><a href="#" onclick="openSmallChildWindowAtRandomPosition()">Open child windows</a></div>
+<div id="me" class="big-center"></div>
+<script>
+    const id = (function makeRandomId() {
+        // An array of a bunch of different emoji we'll use to pick randomly as a display name.
+        const emojis = [
+            '😂','☝️','🤯','🫥','😶‍🌫️','😁','😉','😎','🥲','😙','😍','😐','👽',
+            '😮','🥱','😪','😜','🤤','☹️','🤑','😬','🥶','🥵','🥺','🥸','🤭',
+            '🐺','🐱','🐷','🐮','🦝','🐵','🐶','💩','😽','🐳','🦕','🦆','🐧',
+        ];
+        const valueId = Math.floor(Math.random() * 1000000);
+
+        return {
+            value: valueId,
+            name: emojis[valueId % emojis.length],
+        };
+    })();
+    document.getElementById('me').textContent = id.name;
+    console.log("I am " + id.name + " (" + id.value + ")");
+
+    function openSmallChildWindowAtRandomPosition() {
+        const left = Math.floor(Math.random() * 100);
+        const top = Math.floor(Math.random() * 100);
+        const width = 400;
+        const height = 400;
+        const windowName = "child" + Math.floor(Math.random() * 1000000);
+        const windowFeatures = "left=" + left + ",top=" + top + ",width=" + width + ",height=" + height;
+        window.open(document.location.href, windowName, windowFeatures);
+    }
+
+    class Broadcaster extends EventTarget {
+        #id = null;
+        #channel = new BroadcastChannel('broadcaster');
+
+        constructor(id) {
+            super();
+            this.#id = id;
+            this.#channel.addEventListener('message', this.#eventHandler.bind(this));
+        }
+
+        #broadcast(action, args) {
+            console.log("Sending " + action);
+            this.#channel.postMessage({
+                id: this.#id,
+                action,
+                args,
+            });
+        }
+
+        #eventHandler(event) {
+            const { id: senderId, action, args } = event.data;
+            const senderIdText = senderId.name + " (" + senderId.value + ")";
+            const eventToSend = new CustomEvent(action, { detail: {
+                senderId,
+                senderIdText,
+                action,
+                args,
+            } });
+            this.dispatchEvent(eventToSend);
+        }
+
+        hello() { this.#broadcast('hello'); }
+        goodbye() { this.#broadcast('goodbye'); }
+        position(window) {
+            this.#broadcast('position', {
+                top: window.screenTop,
+                left: window.screenLeft,
+                width: window.innerWidth,
+                height: window.innerHeight,
+            });
+        }
+        text(message) { this.#broadcast('text', { text: message }); }
+    }
+    const broadcaster = new Broadcaster(id);
+
+    // broadcast goodbye before closing
+    window.addEventListener('beforeunload', () => { broadcaster.goodbye(); });
+    broadcaster.hello();
+    broadcaster.position(window);
+
+    // when window position changes or window size changees
+    // send the new position and size to the other windows
+    window.addEventListener('resize', () => { broadcaster.position(window); });
+
+    // There's no move event, so we have to poll for it.
+    class PositionMonitor extends EventTarget {
+        #lastTop = null;
+        #lastLeft = null;
+        #window = null;
+
+        constructor(window) {
+            super();
+            this.#window = window;
+            this.#startUpdate();
+        }
+
+        #startUpdate() {
+            this.#lastTop = this.#window.screenTop;
+            this.#lastLeft = this.#window.screenLeft;
+            setTimeout(this.#checkForPositionChange.bind(this), 250);
+        }
+
+        #checkForPositionChange() {
+            if (this.#window.screenTop !== this.#lastTop || 
+                this.#window.screenLeft !== this.#lastLeft) {
+
+                this.dispatchEvent(new CustomEvent('changed'));
+            }
+            this.#startUpdate();
+        }
+    }
+
+    const positionMonitor = new PositionMonitor(window);
+    positionMonitor.addEventListener('changed', () => { 
+        broadcaster.position(window);
+        windowList.updateAllOtherWindowPosition();
+    });
+
+    // clicking the me icon sends a text message
+    // texts is an array of punctuation emoji that we'll pick randomly from
+    const texts = ['👋','👍','👌','👏','🤝','🤞','🤟','🤘','🤙','👊','✊','👎','👇','👈','👉','👆','🖕','🖐️','✋','🤚','👋','🤏'];
+    document.getElementById('me').addEventListener('click', () => {
+        const text = id.name + " " + texts[Math.floor(Math.random() * texts.length)];
+        broadcaster.text(text);
+    });
+
+    function makeBouncyText(text, fromPosition, toPosition) {
+        // make a div containing text and then animate it from the fromPosition to the toPosition
+        // and animate the opacity from invisible to visible then back to invisible.
+        const div = document.createElement('div');
+        div.classList.add('bouncy-text');
+        div.textContent = text;
+        div.style.left = fromPosition.left;
+        div.style.top = fromPosition.top;
+
+        document.body.appendChild(div);
+
+        setTimeout(() => {
+            div.style.left = toPosition.left;
+            div.style.top = toPosition.top;
+            div.style.opacity = 0;
+
+            setTimeout(() => {
+                document.body.removeChild(div);
+            }, 1000);
+        }, 1);
+    }
+
+    class WindowList {
+        #rectToCenterPos(rect) {
+            return {
+                left: rect.left + (rect.width / 2),
+                top: rect.top + (rect.height / 2),
+            };
+        }
+
+        #otherWindows = {};
+
+        #getOtherWindow(id) {
+            if (id && id.value) {
+                if (!this.#otherWindows[id.value]) {
+                    const div = document.createElement('div');
+                    div.textContent = '⬆️';
+                    div.classList.add('big-arrow');
+                    div.classList.add('hidden');
+                    document.body.appendChild(div);
+                    this.#otherWindows[id.value] = { id, div, pos: { left: 0, top: 0, width: 0, height: 0 } };
+                }
+                return this.#otherWindows[id.value];
+            }
+        }
+
+        updateOtherWindowPosition(id, pos) {
+            const entry = this.#getOtherWindow(id);
+            if (entry && entry.div) {
+                const div = entry.div;
+                entry.pos = pos;
+                const otherCenter = this.#rectToCenterPos(pos);
+                const myCenter = this.#rectToCenterPos({
+                    left: window.screenLeft,
+                    top: window.screenTop,
+                    width: window.innerWidth,
+                    height: window.innerHeight,
+                });
+                // angle from myCenter to otherCenter
+                const angle = Math.atan2(otherCenter.top - myCenter.top, otherCenter.left - myCenter.left) + 1.5708;
+                // set css transform on the div to rotate it by angle and then translate it out towards the window edge
+                div.style.transform = 'rotate(' + angle + 'rad) translate(0, -100%)';
+                // Remove the hidden class name from div
+                div.classList.remove('hidden');
+            }
+        }
+
+        updateAllOtherWindowPosition() {
+            for (const id in this.#otherWindows) {
+                const otherWindow = this.#otherWindows[id];
+                this.updateOtherWindowPosition(otherWindow.id, otherWindow.pos);
+            }
+        }
+
+        removeOtherWindow(id) {
+            if (id && id.value && this.#otherWindows[id.value]) {
+                const otherWindow = this.#otherWindows[id.value];
+                document.body.removeChild(otherWindow.div);
+                delete this.#otherWindows[id.value];
+            }
+        }
+    }
+    const windowList = new WindowList();
+
+    broadcaster.addEventListener('hello', event => {
+        console.log(' - ' + event.detail.senderIdText + ' says hello');
+        broadcaster.position(window);
+    });
+
+    broadcaster.addEventListener('goodbye', event => {
+        console.log(' - ' + event.detail.senderIdText + " says goodbye");
+        windowList.removeOtherWindow(event.detail.senderId);
+    });
+
+    broadcaster.addEventListener('position', event => {
+        console.log(' - ' + event.detail.senderIdText + " moved to " + event.detail.args.left + "," + event.detail.args.top + " (" + event.detail.args.width + "x" + event.detail.args.height + ")");
+        windowList.updateOtherWindowPosition(event.detail.senderId, event.detail.args);
+    });
+
+    broadcaster.addEventListener('text', event => {
+        console.log(' - ' + event.detail.senderIdText + " says " + event.detail.args.text);
+        const randomLeft = Math.floor(Math.random() * 100) + "%";
+        makeBouncyText(event.detail.args.text, {left: randomLeft, top: "0%"}, {left: randomLeft, top: "100%"});
+    });
+</script>
